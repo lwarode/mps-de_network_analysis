@@ -1,0 +1,385 @@
+---
+title: "Analyzing Retweet Dynamics of German MPs in the 19th Legislative Period"
+subtitle: "Assignment 2: Data Analysis Exercise"
+author: "Lukas Warode"
+format: 
+  html:
+    toc: true
+    embed-resources: true
+    self-contained: true
+execute: 
+  echo: true
+  error: false
+  message: false
+  warning: false
+  cache: true
+---
+
+```{r}
+library(tidyverse)
+library(igraph)
+library(tidygraph)
+library(ggraph)
+```
+
+## Load and Manipulate Dataset
+
+In my Master's Thesis, I scale German MPs (MdBs) of the 19th legislative period across ideological dimensions that are determined in an unsupervised way by using parliamentary speeches and **Tweets**. While `retweet` dynamics do not play a big role in the scaling algorithm per se, party affiliation does and is particularly interesting for network analytical approaches, especially in the realm of clustering.
+
+```{r}
+tweet_df_final <- readRDS("data/tweet_df_final_2.rds")
+
+# further meta information 
+od_tw_info <- read_csv("data/od_tw_merge_final.csv")
+```
+
+How many Tweets are there in total? Over 1.3 Million - quite a lot.
+
+```{r}
+tweet_df_final %>% 
+  nrow()
+```
+
+
+
+How many Twitter users are there in total across all MPs of the 19th legislative period?
+
+```{r}
+tweet_df_final %>% 
+  select(author_id, tw_id) %>% 
+  distinct() %>% 
+  nrow()
+```
+
+### Create `data.frame` that exhibits information of referenced `Tweets`
+
+```{r}
+retweet_df <- tweet_df_final %>% 
+  select(referenced_tweets, tweet_type_character, tweet_type_final, id) %>% 
+  mutate(
+    # type of referenced tweet
+    ref_tweet_types = map(1:length(referenced_tweets),
+                          ~ referenced_tweets[[.x]][["type"]]),
+    # id of referenced tweet (NOT id of user)
+    ref_tweet_id = map(1:length(referenced_tweets),
+                       ~ referenced_tweets[[.x]][["id"]])
+  )  
+```
+
+### Get author information of `Tweets` that were referenced
+
+```{r}
+author_id_ref_tweet <- retweet_df %>% 
+  filter(ref_tweet_types == "retweeted") %>% 
+  mutate(ref_tweet_id = unlist(ref_tweet_id)) %>% 
+  left_join(
+    tweet_df_final %>% select(id, author_id, tw_id), 
+    by = c("ref_tweet_id" = "id")
+  ) %>% 
+  filter(!is.na(author_id), !is.na(tw_id)) %>% 
+  select(id, ref_tweet_id, author_id, author_id, tw_id)
+```
+
+### Create final `data.frame` that only consists of `retweets` that occured within the dataset
+
+Filter for `retweets` and merge author information from `retweeted` `Tweets`. 
+
+```{r}
+# vector with IDs from Tweets that are from authors within the dataset
+tweet_ids <- tweet_df_final$id
+
+retweet_within_df <- retweet_df %>% 
+  filter(ref_tweet_types == "retweeted") %>% 
+  filter(ref_tweet_id %in% tweet_ids) %>% 
+  left_join(tweet_df_final %>% select(id, author_id, tw_id)) %>% 
+  # directedness: from (orginal tweet) -> to (retweeted tweet) 
+  left_join(author_id_ref_tweet, by = "id", suffix = c("_to", "_from"))
+```
+
+How many Tweets are left after constructing the "within-`retweet` `data.frame`? Just about 100000 or 7.7% of all Tweets.
+
+```{r}
+retweet_within_df %>% nrow()
+```
+
+
+```{r}
+paste0((nrow(retweet_within_df) / nrow(tweet_df_final) * 100) %>% round(1), "%")
+```
+
+
+### Validate Retweet-Network Structure
+
+```{r}
+retweet_within_df %>% select(tw_id_from, tw_id_to) %>% head(5)
+```
+
+This makes actually sense! Doris Achelwilm (MP from Left Party) retweets Katja Kipping and Dietmar Bartsch, which do both play a central role in the Left Party: They were party leaders in the 19th legislative period.
+
+### Plot most `retweeted` MPs
+
+First, let us create a vector with party colors.
+
+```{r}
+party_colors <- c("#138BD8", "#000000", "#FFEE0A", "#529222", "#AE1862", "#E30019")
+names(party_colors) <- c("AfD", "CDU/CSU", "FDP", "Grüne", "DIE LINKE.", "SPD")
+```
+
+We also create a `ggplot2` theme, which is based on `theme_bw()`, but has some refinements.
+
+```{r}
+theme_custom <- function() {
+  font <- "Corbel"
+  # base theme
+  theme_bw() %+replace%
+    theme(
+      text = element_text(family = font),
+      legend.text = element_text(size = 9),
+      legend.title = element_blank(),
+      legend.box.background = element_rect(
+        colour = "black",
+        fill = "white",
+        linetype = "solid"
+      ),
+      # grid lines
+      panel.grid.major = element_line(color = "grey60", size = 0.2),
+      panel.grid.minor = element_line(color = "grey80", size = 0.1),
+      # faceting
+      strip.background = element_blank(),
+      strip.text = element_text(color = "black"),
+    )
+}
+```
+
+Now, we set the new theme as default.
+
+```{r}
+theme_set(theme_custom())
+```
+
+
+We also create a `data.frame` that just includes the party affiliation per MP.
+
+```{r}
+party_user <- tweet_df_final %>% 
+  distinct(tw_id, party)
+```
+
+#### Plot Top 20
+
+Now, we count how often per MP a `Tweet` was `retweeted` by another MP. We plot the to 20 MPs in total and visualize the party affiliation.
+
+```{r}
+retweet_within_df %>% 
+  group_by(tw_id_from) %>%
+  count() %>%
+  ungroup() %>% 
+  arrange(desc(n)) %>% 
+  top_n(20) %>% 
+  left_join(party_user, by = c("tw_id_from" = "tw_id")) %>%
+  ggplot(aes(x = n, y = reorder(tw_id_from, n), fill = party)) + 
+  geom_col() +
+  scale_fill_manual(values = party_colors) +
+  labs(y = "", title = "Most Prominent MPs by Retweets of other MPs")
+```
+
+Interestingly, the AfD and FDP dominate the chart, while there is no single SPD MP within the top 20 most retweeted MPs within. Let's check the pattern and plot by party! Overall, the results seem to make sense, given that party leaders and influential MPs are the most retweeted MPs according to the bar plot.
+
+#### Plot Top 20 by Party
+
+Now, let's turn the attention to the most retweeted MPs by party. Both CDU/CSU and SPD, the biggest parties and also only members of the governing coalition of the 19th legislative period do not have as many influential MPs, measured by number of retweets across their colleagues, as opposition parties have.
+
+```{r}
+retweet_within_df %>% 
+  left_join(party_user, by = c("tw_id_from" = "tw_id")) %>%
+  filter(!party %in% c("Fraktionslos", NA)) %>% 
+  group_by(tw_id_from, party) %>%
+  count() %>%
+  group_by(party) %>% 
+  arrange(desc(n)) %>%
+  top_n(10) %>% 
+  ggplot(aes(x = n, y = reorder(tw_id_from, n), fill = party)) + 
+  geom_col() +
+  facet_wrap(~ party, scales = "free_y", ncol = 2) +
+  scale_fill_manual(values = party_colors) +
+  labs(y = "", title = "Most Prominent MPs by Retweets of other MPs", subtitle = "Grouped by Party")
+```
+
+
+## Construct Retweet-Network
+
+In a Retweet-Network each `retweet` is represented as a directed link in a network that connects **from** the `original Tweet` **to** the referenced `retweet`. Users that are often `retweeted` within the network are expected to be associated with some degree of (digital) political relevance, even though there a lot of potential confounding variables (e.g. number of Tweets, number of Followers, general social media behaviour and association with socio-demographic factors such as cohort affiliation). 
+
+```{r}
+retweet_network <- retweet_within_df %>% 
+  select(from = tw_id_from, to = tw_id_to) %>% 
+  as_tbl_graph(directed = TRUE) %N>% 
+  left_join(party_user, by = c("name" = "tw_id"))
+```
+
+## Degree Centrality
+
+### Out-degree
+
+In the previous plots, we already calculated the out-degree centrality (which is the same as the number of outgoing edges per node or the number of `original Tweets` that have been `retweeted` within). Nevertheless, double-checking is always a good practice!
+
+```{r}
+# %N>% activate nodes (tidygraph syntax)
+retweet_network %N>%
+  mutate(
+    in_degree = centrality_degree(mode = "in"),
+    out_degree = centrality_degree(mode = "out")
+  ) %>% 
+  arrange(desc(out_degree)) %>% 
+  select(name, out_degree) %>% 
+  as_tibble() %>% 
+  head(20)
+```
+
+### In-degree
+
+The in-degree corresponds to the "inverse retweet behaviour": It indicates which MPs retweeted Tweets of other MPs.
+
+```{r}
+# %N>% activate nodes (tidygraph syntax)
+retweet_network %N>%
+  mutate(
+    in_degree = centrality_degree(mode = "in"),
+    out_degree = centrality_degree(mode = "out")
+  ) %>% 
+  arrange(desc(in_degree)) %>% 
+  select(name, in_degree) %>% 
+  as_tibble() %>% 
+  top_n(20)
+```
+
+### Comparing Out- and In-degree
+
+In- and out-degree seem to be correlated ($R = 0.53$), however, there are outliers that influence the relationship heavily.
+
+```{r}
+# %N>% activate nodes (tidygraph syntax)
+retweet_network %N>%
+  mutate(
+    in_degree = centrality_degree(mode = "in"),
+    out_degree = centrality_degree(mode = "out")
+  ) %>% 
+  select(name, in_degree, out_degree) %>% 
+  as_tibble() %>% 
+  left_join(party_user, by = c("name" = "tw_id")) %>%
+  ggplot(aes(out_degree, in_degree)) + 
+  geom_point(alpha = 0.5) +
+  ggpubr::stat_cor() 
+```
+
+It seems that there are a few outliers at the upper end of the distribution. Let's see whether the correlation holds when they are removed.
+
+The correlation is still quite high ($R = 0.38$) and highly significant, when we remove the MPs with the top 20 highest in- and out-degrees.
+
+```{r}
+top_20_in <- retweet_network %>% 
+  mutate(in_degree = centrality_degree(mode = "in")) %>% 
+  arrange(desc(in_degree)) %>% 
+  as_tibble() %>% 
+  top_n(20) %>% 
+  pull(name)
+
+top_20_out <- retweet_network %>% 
+  mutate(out_degree = centrality_degree(mode = "out")) %>% 
+  arrange(desc(out_degree)) %>% 
+  as_tibble() %>% 
+  top_n(20) %>% 
+  pull(name)
+
+# %N>% activate nodes (tidygraph syntax)
+retweet_network %N>%
+  mutate(
+    in_degree = centrality_degree(mode = "in"),
+    out_degree = centrality_degree(mode = "out")
+  ) %>% 
+  select(name, in_degree, out_degree) %>% 
+  as_tibble() %>% 
+  left_join(party_user, by = c("name" = "tw_id")) %>%
+  filter(!name %in% top_20_in, !name %in% top_20_out) %>% 
+  ggplot(aes(out_degree, in_degree)) + 
+  geom_point(alpha = 0.5) +
+  ggpubr::stat_cor() 
+```
+
+
+
+
+
+In a data analysis exercise a real-world, but pre-defined and cleaned data set, is assigned from a small collection of examples. A list of descriptive measures, as well as community detection methods should be applied, using a programming language and libraries of choice (which have been introduced in the course before). In a short report, either including the code (e.g., a python notebook) or a text document with plots (in this case the code should be submitted additionally), the results should be presented and their meaning interpreted and discussed with respect to the dataset at hand. Students will have two weeks to solve this task individually at home. Grading will be one half the correct application of the descriptive measures and the other half the presentation (i.e., plots), the interpretation and the discussion of those results.
+
+## Network Visualization
+
+Create a new custom theme, based on `ggraph::theme_graph()`.
+
+```{r}
+theme_graph_custom <- function() {
+  font <- "Corbel"
+  # base theme
+  theme_graph() %+replace%
+    theme(
+      text = element_text(family = font),
+      legend.text = element_text(size = 9),
+      legend.title = element_blank(),
+      legend.box.background = element_rect(
+        colour = "black",
+        fill = "white",
+        linetype = "solid"
+      ),
+      # faceting
+      strip.background = element_blank(),
+      strip.text = element_text(color = "black"),
+    )
+}
+
+```
+
+
+### Standard Plot
+
+Using `ggraph` auto/default options to plot all nodes and edges.
+
+```{r, cache=TRUE}
+plot_all_auto <- retweet_network %>% 
+  ggraph(layout = "auto") + 
+  geom_edge_link(alpha = 0.015) +
+  geom_node_point(aes(color = party))  +
+  scale_color_manual(values = party_colors) + 
+  theme_graph_custom() 
+
+plot_all_auto
+```
+
+###
+
+### In- and Out-Degree Distribution
+
+```{r}
+# degree_df <- 
+
+```
+
+### Selecting Subgraph for Visualization
+
+Selecting subgraph based on largest component.
+
+### Visualize several Layouts
+
+### Centrality Measures
+
+### Shortest Paths
+
+## Community Detection
+
+### Community Detection in Relationship with Party Affiliation
+
+## Further Work
+
+### Relationship of Centrality and Social Media Profile Influence
+
+
+The `echo: false` option disables the printing of code (only output is displayed).
