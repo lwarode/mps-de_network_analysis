@@ -12,8 +12,10 @@ execute:
   error: false
   message: false
   warning: false
-  cache: true
+  cache: true  
 ---
+
+In a data analysis exercise a real-world, but pre-defined and cleaned data set, is assigned from a small collection of examples. A list of descriptive measures, as well as community detection methods should be applied, using a programming language and libraries of choice (which have been introduced in the course before). In a short report, either including the code (e.g., a python notebook) or a text document with plots (in this case the code should be submitted additionally), the results should be presented and their meaning interpreted and discussed with respect to the dataset at hand. Students will have two weeks to solve this task individually at home. Grading will be one half the correct application of the descriptive measures and the other half the presentation (i.e., plots), the interpretation and the discussion of those results.
 
 ```{r}
 library(tidyverse)
@@ -96,7 +98,7 @@ retweet_within_df <- retweet_df %>%
   left_join(author_id_ref_tweet, by = "id", suffix = c("_to", "_from"))
 ```
 
-How many Tweets are left after constructing the "within-`retweet` `data.frame`? Just about 100000 or 7.7% of all Tweets.
+How many Tweets are left after constructing the "within-`retweet` `data.frame`"? Just about 100000 or 7.7% of all Tweets.
 
 ```{r}
 retweet_within_df %>% nrow()
@@ -180,7 +182,8 @@ retweet_within_df %>%
   ggplot(aes(x = n, y = reorder(tw_id_from, n), fill = party)) + 
   geom_col() +
   scale_fill_manual(values = party_colors) +
-  labs(y = "", title = "Most Prominent MPs by Retweets of other MPs")
+  labs(y = "", title = "Most Prominent MPs by Retweets of other MPs") +
+  theme_custom()
 ```
 
 Interestingly, the AfD and FDP dominate the chart, while there is no single SPD MP within the top 20 most retweeted MPs within. Let's check the pattern and plot by party! Overall, the results seem to make sense, given that party leaders and influential MPs are the most retweeted MPs according to the bar plot.
@@ -202,7 +205,8 @@ retweet_within_df %>%
   geom_col() +
   facet_wrap(~ party, scales = "free_y", ncol = 2) +
   scale_fill_manual(values = party_colors) +
-  labs(y = "", title = "Most Prominent MPs by Retweets of other MPs", subtitle = "Grouped by Party")
+  labs(y = "", title = "Most Prominent MPs by Retweets of other MPs", subtitle = "Grouped by Party") +
+  theme_custom()
 ```
 
 
@@ -213,8 +217,22 @@ In a Retweet-Network each `retweet` is represented as a directed link in a netwo
 ```{r}
 retweet_network <- retweet_within_df %>% 
   select(from = tw_id_from, to = tw_id_to) %>% 
-  as_tbl_graph(directed = TRUE) %N>% 
-  left_join(party_user, by = c("name" = "tw_id"))
+  as_tbl_graph(directed = TRUE) %>% 
+  left_join(party_user, by = c("name" = "tw_id")) 
+ 
+# get corresponding row ID (from ID) 
+row_id_from <- retweet_network %>% 
+  as_tibble() %>%
+  mutate(id_from = row_number())
+
+# update retweet network with edge information: name and party of retweeted users (from)
+retweet_network <- retweet_network %>% 
+  activate(edges) %>% 
+  left_join(row_id_from, by = c("from" = "id_from")) %>% 
+  rename(party_from = party, name_from = name) %>% 
+  activate(nodes)
+
+retweet_network
 ```
 
 ## Degree Centrality
@@ -227,14 +245,49 @@ In the previous plots, we already calculated the out-degree centrality (which is
 # %N>% activate nodes (tidygraph syntax)
 retweet_network %N>%
   mutate(
-    in_degree = centrality_degree(mode = "in"),
+    # in_degree = centrality_degree(mode = "in"),
     out_degree = centrality_degree(mode = "out")
   ) %>% 
   arrange(desc(out_degree)) %>% 
-  select(name, out_degree) %>% 
+  select(name, out_degree, party) %>% 
   as_tibble() %>% 
-  head(20)
+  head(20) %>% 
+  knitr::kable()
 ```
+
+Now, let's plot the distribution of the out-degree. There are a few outliers at the upper end.
+
+```{r}
+retweet_network %N>%
+  mutate(
+    # in_degree = centrality_degree(mode = "in"),
+    out_degree = centrality_degree(mode = "out")
+  ) %>% 
+  as_tibble() %>% 
+  ggplot(aes(x = out_degree)) + 
+  geom_histogram() +
+  labs(x = "Out-Degree") +
+  theme_custom()
+```
+
+The out-degree distribution is quite comparable across parties: Most MPs were never retweeted, but have important `retweet` hubs. However, for the Green and Left Party, the distribution seems to be a bit less skewed.
+
+```{r}
+retweet_network %N>%
+  filter(!party %in% c("Fraktionslos", NA)) %>% 
+  mutate(
+    # in_degree = centrality_degree(mode = "in"),
+    out_degree = centrality_degree(mode = "out")
+  ) %>% 
+  as_tibble() %>% 
+  ggplot(aes(x = out_degree, fill = party)) + 
+  geom_histogram() +
+  labs(x = "Out-Degree") +
+  facet_wrap(~ party, scales = "free") +
+  scale_fill_manual(values = party_colors) +
+  theme_custom()
+```
+
 
 ### In-degree
 
@@ -245,13 +298,46 @@ The in-degree corresponds to the "inverse retweet behaviour": It indicates which
 retweet_network %N>%
   mutate(
     in_degree = centrality_degree(mode = "in"),
-    out_degree = centrality_degree(mode = "out")
+    # out_degree = centrality_degree(mode = "out")
   ) %>% 
   arrange(desc(in_degree)) %>% 
-  select(name, in_degree) %>% 
+  select(name, in_degree, party) %>% 
   as_tibble() %>% 
-  top_n(20)
+  head(20) %>% 
+  knitr::kable()
 ```
+
+```{r}
+retweet_network %N>%
+  mutate(
+    in_degree = centrality_degree(mode = "in"),
+    # out_degree = centrality_degree(mode = "out")
+  ) %>% 
+  as_tibble() %>% 
+  ggplot(aes(x = in_degree)) + 
+  geom_histogram() +
+  labs(x = "In-Degree") +
+  theme_custom()
+```
+
+```{r}
+retweet_network %N>%
+  filter(!party %in% c("Fraktionslos", NA)) %>% 
+  mutate(
+    in_degree = centrality_degree(mode = "in"),
+    # out_degree = centrality_degree(mode = "out")
+  ) %>% 
+  as_tibble() %>% 
+  ggplot(aes(x = in_degree, fill = party)) + 
+  geom_histogram() +
+  labs(x = "In-Degree") +
+  facet_wrap(~ party, scales = "free") +
+  scale_fill_manual(values = party_colors) +
+  theme_custom()
+```
+
+The in-degree distribution seems to be a bit more normally distributed, meaning that "inverse hubs", or MPs that heavily `retweeted` other MPs, are also present but not as dominant as `retweeted` MP hubs. However, the AfD seems to dominate the `retweet` dynamic from this perspective, as the table above shows.
+
 
 ### Comparing Out- and In-degree
 
@@ -269,7 +355,8 @@ retweet_network %N>%
   left_join(party_user, by = c("name" = "tw_id")) %>%
   ggplot(aes(out_degree, in_degree)) + 
   geom_point(alpha = 0.5) +
-  ggpubr::stat_cor() 
+  ggpubr::stat_cor() +
+  theme_custom()
 ```
 
 It seems that there are a few outliers at the upper end of the distribution. Let's see whether the correlation holds when they are removed.
@@ -303,14 +390,56 @@ retweet_network %N>%
   filter(!name %in% top_20_in, !name %in% top_20_out) %>% 
   ggplot(aes(out_degree, in_degree)) + 
   geom_point(alpha = 0.5) +
-  ggpubr::stat_cor() 
+  ggpubr::stat_cor() +
+  theme_custom()
+```
+
+```{r}
+retweet_network %N>%
+  filter(!party %in% c("Fraktionslos", NA)) %>% 
+  mutate(
+    in_degree = centrality_degree(mode = "in"),
+    out_degree = centrality_degree(mode = "out")
+  ) %>% 
+  select(name, in_degree, out_degree) %>% 
+  as_tibble() %>% 
+  left_join(party_user, by = c("name" = "tw_id")) %>%
+  filter(!name %in% top_20_in, !name %in% top_20_out) %>% 
+  ggplot(aes(out_degree, in_degree)) + 
+  geom_point(alpha = 0.5, aes(color = party)) +
+  ggpubr::stat_cor(show.legend = F) +
+  facet_wrap(~ party) +
+  scale_color_manual(values = party_colors) +
+  theme_custom()
+```
+
+
+## Distance / Shortest Path Length
+
+Most of the users are connected across (a path length of) 2 or 3 `retweets`.
+
+```{r}
+distances_retweet_network <- retweet_network %>% 
+  distances() %>%
+  table() %>% 
+  as_tibble() %>% 
+  rename(Distance = 1) 
+
+distances_retweet_network %>% 
+  knitr::kable()
+```
+
+```{r}
+distances_retweet_network %>%
+  ggplot(aes(x = Distance, y = n)) + geom_col() +
+  ggtitle("Distribution of Distance (Shortest Path)") +
+  theme_custom()
 ```
 
 
 
 
 
-In a data analysis exercise a real-world, but pre-defined and cleaned data set, is assigned from a small collection of examples. A list of descriptive measures, as well as community detection methods should be applied, using a programming language and libraries of choice (which have been introduced in the course before). In a short report, either including the code (e.g., a python notebook) or a text document with plots (in this case the code should be submitted additionally), the results should be presented and their meaning interpreted and discussed with respect to the dataset at hand. Students will have two weeks to solve this task individually at home. Grading will be one half the correct application of the descriptive measures and the other half the presentation (i.e., plots), the interpretation and the discussion of those results.
 
 ## Network Visualization
 
@@ -338,10 +467,9 @@ theme_graph_custom <- function() {
 
 ```
 
-
 ### Standard Plot
 
-Using `ggraph` auto/default options to plot all nodes and edges.
+Using `ggraph` auto/default options to plot all nodes and edges, we can see that there is a strong pattern of "intra-party retweeting". Interestingly, while most parties members exhibits almost exclusively `retweet` within the party, there is a strong visual intersection of SPD and Left Party `retweets`. To a lesser extent, this also repeats for party of the Greens with the SPD
 
 ```{r, cache=TRUE}
 plot_all_auto <- retweet_network %>% 
@@ -354,26 +482,146 @@ plot_all_auto <- retweet_network %>%
 plot_all_auto
 ```
 
-###
+### Circular
 
-### In- and Out-Degree Distribution
+Now let's visualize the network in a circular way, highlighting the `retweet` dynamics in a way that underlines the party structure of the dataset.
+
+```{r, cache=TRUE}
+plot_all_circular <- retweet_network %>% 
+  filter(!party %in% c("Fraktionslos", NA)) %>% 
+  ggraph(layout = "linear", circular = TRUE) + 
+  geom_edge_arc(aes(color = party_from), alpha = 0.015) +
+  scale_edge_color_manual(values = party_colors) + 
+  coord_fixed() +
+  theme_graph_custom() +
+  theme(legend.position = "none")
+
+plot_all_circular
+```
+
+## Further Centrality Measures
+
+### Closeness Centrality
+
+The Closeness Centrality is defined as the inverse total distance of paths between a node and all other nodes in the network. Shorter paths to others are thus an indicator of node centrality. 
 
 ```{r}
-# degree_df <- 
-
+closeness_retweet_network <- retweet_network %>% 
+  mutate(Closeness = centrality_closeness())
 ```
+
+The Closeness Centrality is not dominated by the AfD, which was exhibiting the MPs with the highest degrees. This finding underlines that centrality measures that go beyond the degree centrality play an important role when assessing the actual dynamics of the dataset.
+
+```{r}
+closeness_retweet_network %>% 
+  filter(Closeness != 1) %>% 
+  arrange(desc(Closeness)) %>% 
+  select(name, Closeness, party) %>% 
+  as_tibble() %>% 
+  head(20) %>% 
+  knitr::kable()
+```
+
+
+The closeness centrality seems to be actually normally distributed, while there are some outliers on the lower bound.
+
+```{r}
+closeness_retweet_network %>% 
+  filter(Closeness != 1) %>% 
+  as_tibble() %>% 
+  ggplot(aes(x = Closeness)) + 
+  geom_density() +
+  theme_custom()
+```
+
+While most parties have an approximately equally distributed Closeness Centrality, the AfD has the lowest one with a visually perceivable difference. For interpretational reasons, this is likelly due to internal heterogeneity, given the populist character and short existence period of the party. 
+
+```{r}
+closeness_retweet_network %>% 
+  filter(!party %in% c("Fraktionslos", NA)) %>%
+  filter(Closeness != 1) %>% 
+  as_tibble() %>% 
+  ggplot(aes(x = Closeness, y = reorder(party, Closeness), fill = party)) + 
+  ggridges::stat_density_ridges(alpha = 0.5, quantile_lines = T, quantiles = 4) +
+  scale_fill_manual(values = party_colors) +
+  theme_custom() +
+  labs(y = "")
+```
+
+### Betweenness Centrality
+
+TODO: explain betweenness centrality
+
+```{r}
+betweenness_retweet_network <- retweet_network %>% 
+  mutate(Betweenness = centrality_betweenness())
+```
+
+```{r}
+betweenness_retweet_network %>% 
+  arrange(desc(Betweenness)) %>% 
+  select(name, Betweenness, party) %>% 
+  as_tibble() %>% 
+  head(20) %>% 
+  knitr::kable()
+```
+
+
+
+```{r}
+betweenness_retweet_network %>% 
+  as_tibble() %>% 
+  ggplot(aes(x = Betweenness)) + 
+  geom_histogram() +
+  theme_custom()
+```
+```{r}
+betweenness_retweet_network %>% 
+  as_tibble() %>% 
+  ggplot(aes(x = Betweenness)) + 
+  geom_histogram() +
+  scale_x_log10() +
+  theme_custom()
+```
+
+
+```{r}
+betweenness_retweet_network %>% 
+  filter(!party %in% c("Fraktionslos", NA)) %>%
+  filter(Betweenness != 1) %>% 
+  as_tibble() %>% 
+  ggplot(aes(x = Betweenness, color = party)) + 
+  facet_wrap(~ party) +
+  geom_density() +
+  scale_x_log10() +
+  # geom_density() +<
+  scale_color_manual(values = party_colors) +
+  theme_custom() +
+  labs(y = "")
+```
+
 
 ### Selecting Subgraph for Visualization
 
-Selecting subgraph based on largest component.
+Selecting a subgraph (sub-network) based on the largest component.
 
-### Visualize several Layouts
+```{r}
 
-### Centrality Measures
+```
 
-### Shortest Paths
+
+
 
 ## Community Detection
+
+
+Since we are dealing with a directed network, not every type of community detection algorithm is appropriate.
+
+```{r, eval=FALSE}
+retweet_network_group_betweenness <- retweet_network %>% 
+  mutate(group = group_edge_betweenness(n_groups = 6))
+```
+
 
 ### Community Detection in Relationship with Party Affiliation
 
