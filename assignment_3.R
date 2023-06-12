@@ -51,6 +51,17 @@ theme_custom <- function() {
     )
 }
 
+# function that stores environment object based on relative sub-folder path
+store_object <- function(obj_name, rel_path, file_type = ".rds") {
+  obj_name_string <- deparse(substitute(obj_name))
+  object_file <- paste0(obj_name_string, file_type)
+  file_name <- here::here(rel_path, object_file)
+  # return(file_name)
+  if (file_type == ".rds") {
+    saveRDS(obj_name, file_name)
+  }
+}
+
 retweet_within_df <- read_rds("data/retweet_within_df.rds")
 
 mdb_profiles_lp19_list <- read_rds("data/mdb_profiles_lp19_list.rds")
@@ -60,9 +71,7 @@ mdb_profiles_lp19_list_df <- mdb_profiles_lp19_list |>
   mutate(tw_id = str_to_lower(username))
 
 
-node_information <- retweet_within_df |> 
-  select(tw_id_from, party_from) |> 
-  distinct()
+
 
 edge_information <- retweet_within_df |> 
   select(date) |> 
@@ -97,6 +106,8 @@ plot_all_auto <- retweet_network %>%
   geom_node_point(aes(color = party))  +
   scale_color_manual(values = party_colors) + 
   theme_graph_custom() 
+
+class(retweet_network)
 
 ggsave(
   filename = "figures/plot_all_auto.png",
@@ -286,12 +297,12 @@ plot(imc, retweet_network)
 
 rep(communities(cluster_infomap(retweet_network, nb.trials = 10)), 10)
 
-fun_mean_party_congruence <- function() {
+fun_mean_party_congruence <- function(n_trials = 10) {
   
   df_infomap <- retweet_network |> 
     filter(!party %in% c("Fraktionslos", NA)) %>%
     mutate(
-      im1 = group_infomap(trials = 10),
+      im1 = group_infomap(trials = n_trials),
       # im2 = group_infomap()
     ) |> 
     as.data.frame() |> 
@@ -300,13 +311,32 @@ fun_mean_party_congruence <- function() {
     group_by(im1) |> 
     mutate(party_freq = n / sum(n))
   
-  df_infomap |> 
+  mean_all <- df_infomap |> 
     filter(n == max(n)) |> 
     pull(party_freq) |> 
     mean()
+  
+  mean_party <- df_infomap |> 
+    filter(n == max(n)) |> 
+    group_by(party) |> 
+    summarise(mean = mean(party_freq)) |> 
+    ungroup()
+  
+  df <- tibble(
+    mean_all = mean_all,
+    party = mean_party$party,
+    mean_party = mean_party$mean,
+    n_trials = n_trials
+  )
+  
 }
 
-fun_mean_party_congruence()
+
+# From all predicted communities, what is the average share of the largest party within that community?
+# Mean = mean of all values
+# Measure = party congruence
+
+df_test <- fun_mean_party_congruence()
 
 df_infomap |> 
   filter(n == max(n)) |> 
@@ -315,6 +345,273 @@ df_infomap |>
 
 df_infomap |> distinct(im1)
 
-?group_infomap
+infomap_run_100_500_50 <- map(
+  seq(100, 500, 50),
+  ~ rerun(50, fun_mean_party_congruence(n_trials = .x))
+)
+5
+store_object(infomap_run_100_500_50, "data")
 
-mean(replicate(1000, fun_mean_party_congruence()))
+df_infomap_run_5_100_50 <- readRDS("~/Documents/MDS/Semester_4/Applied_Network_Analysis/mps-de_network_analysis/data/df_infomap_run_5_100_50.rds")
+
+
+
+df_infomap_run_5_100_50 |> 
+  pull(mean_all) |> 
+  mean()
+
+
+# TODO replace with seq(5, 500, 10)
+
+# df_infomap_run_5_100_100 <- infomap_run_5_100_100 |> 
+#   bind_rows() 
+# 
+# store_object(df_infomap_run_5_100_100, "data")
+# 
+
+df_infomap_run_5_100_50 |> 
+  distinct(mean_all, n_trials, .keep_all = T) |> 
+  pull(mean_all) |> 
+  mean()
+
+pl_infomap_run_5_100_50 <- df_infomap_run_5_100_50 |>
+  distinct(mean_all, n_trials, .keep_all = T) |>
+  ggplot(aes(x = factor(n_trials), y = mean_all)) +
+  geom_boxplot() +
+  geom_point(alpha = 0.35) +
+  theme_custom() +
+  labs(x = "N Trials", y = "Party Congruence (Mean)")  +
+  scale_y_continuous(labels = scales::percent)
+
+pl_infomap_run_5_100_50
+
+ggsave(
+  file = "figures/pl_infomap_run_5_100_50.png",
+  plot = pl_infomap_run_5_100_50,
+  width = 6,
+  height = 6
+)
+
+
+df_infomap_run_5_100_50 |> 
+  group_by(party) |> 
+  summarise(mean_party = mean(mean_party)) |> 
+  arrange(desc(mean_party))
+
+
+pl_infomap_run_5_100_50_party <- df_infomap_run_5_100_50 |>
+  ggplot(aes(x = factor(n_trials), y = mean_party, color = party)) +
+  facet_wrap(~ party) +
+  scale_color_manual(values = party_colors) +
+  geom_boxplot() +
+  geom_point(alpha = 0.35) +
+  theme_custom() +
+  theme(legend.position = "none") +
+  labs(x = "N Trials", y = "Party Congruence (Mean)")  +
+  scale_y_continuous(labels = scales::percent)
+
+
+ggsave(
+  file = "figures/pl_infomap_run_5_100_50_party.png",
+  plot = pl_infomap_run_5_100_50_party,
+  width = 10,
+  height = 8
+)
+  
+
+pl_infomap_run_5_100_50_party
+
+seq(5, 100, 10) |> length()
+
+
+
+# HRG Link Prediction -----------------------------------------------------
+predict_network <- readRDS("~/Documents/MDS/Semester_4/Applied_Network_Analysis/mps-de_network_analysis/data/predict_network.rds")
+
+
+pred_df <- function(pred_obj) {
+  from_df <- retweet_network |> 
+    activate(edges) |>
+    # select(from, name_from) |> 
+    distinct(from, name_from) |> 
+    as.data.frame() |> 
+    select(from, name_from)
+  
+  node_information <- retweet_network |> 
+    activate(nodes) |> 
+    select(name, party_from = party) |> 
+    # filter(!party_from %in% c("Fraktionslos", NA)) |> 
+    as.data.frame() |> 
+    distinct()
+  
+  row_id_from <- retweet_network %>% 
+    as_tibble() %>%
+    mutate(id_from = row_number())
+  
+  tibble(
+    edges_from = pred_obj$edges[, 1],
+    edges_to = pred_obj$edges[, 2],
+    prob = pred_obj$prob
+  ) |> 
+    left_join(from_df, by = c("edges_from" = "from")) |> 
+    left_join(node_information, by = c("name_from" = "name")) |> 
+    left_join(row_id_from |> select(name_to = name, party_to = party, row_id = id_from), by = c("edges_to" = "row_id"))
+}
+
+df_predict_network <- pred_df(predict_network)
+
+
+df_predict_network |> 
+  filter(!party_from %in% c("Fraktionslos", NA),
+         !party_to %in% c("Fraktionslos", NA)) |>
+  group_by(party_from, party_to) |> 
+  summarise(prob_mean = mean(prob), prob_median = median(prob), prob_sd = sd(prob), n = n()) |> 
+  # filter(party_from == party_to) |> 
+  arrange(desc(prob_mean))
+
+# mean
+pl_predict_network_mean_party <- df_predict_network |> 
+  filter(!party_from %in% c("Fraktionslos", NA),
+         !party_to %in% c("Fraktionslos", NA)) |>
+  group_by(party_from, party_to) |> 
+  summarise(prob_mean = mean(prob), prob_median = median(prob), prob_sd = sd(prob), n = n()) |> 
+  ggplot(aes(x = party_to, y = prob_mean, fill = party_to)) +
+  geom_col() +
+  facet_wrap(~ party_from) +
+  theme_custom() +
+  theme(legend.position = "none") +
+  labs(y = "Mean Probability of Link (Retweet)", x = "") +
+  scale_y_continuous(labels = scales::label_percent()) +
+  scale_fill_manual(values = party_colors) 
+
+pl_predict_network_mean_party 
+
+ggsave(
+  filename = "figures/pl_predict_network_mean_party.png",
+  pl_predict_network_mean_party,
+  width = 12,
+  height = (12*9/16)
+)
+
+# median
+df_predict_network |> 
+  filter(!party_from %in% c("Fraktionslos", NA),
+         !party_to %in% c("Fraktionslos", NA)) |>
+  group_by(party_from, party_to) |> 
+  summarise(prob_mean = mean(prob), prob_median = median(prob), prob_sd = sd(prob), n = n()) |> 
+  ggplot(aes(x = party_to, y = prob_median, fill = party_to)) +
+  geom_col() +
+  facet_wrap(~ party_from) +
+  theme_custom() +
+  scale_fill_manual(values = party_colors) 
+
+pl_predict_network_density_party <- df_predict_network |> 
+  filter(!party_from %in% c("Fraktionslos", NA),
+         !party_to %in% c("Fraktionslos", NA)) |> 
+  ggplot(aes(x = prob, y = party_to, fill = party_to))  +
+  ggridges::geom_density_ridges() +
+  facet_wrap(~ party_from) +
+  scale_fill_manual(values = party_colors) +
+  theme_custom() +
+  theme(legend.position = "none") +
+  labs(x = "Probability of Link (Retweet)", y = "") +
+  scale_x_continuous(labels = scales::label_percent())
+
+pl_predict_network_density_party
+
+ggsave(
+  filename = "figures/pl_predict_network_density_party.png",
+  pl_predict_network_density_party,
+  width = 12,
+  height = (12*9/16)
+)
+  
+
+
+df_predict_network |> 
+  filter(!party_from %in% c("Fraktionslos", NA),
+         !party_to %in% c("Fraktionslos", NA)) |> 
+  filter(prob > 0.5) |>
+  group_by(party_from, party_to) |> 
+  summarise(n = n())
+
+df_predict_network |> 
+  filter(!party_from %in% c("Fraktionslos", NA),
+         !party_to %in% c("Fraktionslos", NA)) |> 
+  # filter(prob > 0.5) |>
+  group_by(party_from, party_to) |> 
+  summarise(n = n())
+
+# test
+df_predict_network |> 
+  filter(!party_from %in% c("Fraktionslos", NA),
+         !party_to %in% c("Fraktionslos", NA)) |> 
+  filter(prob > 0.5) |>
+  filter(party_from != party_to) 
+
+df_predict_network |> 
+  filter(!party_from %in% c("Fraktionslos", NA),
+         !party_to %in% c("Fraktionslos", NA)) |> 
+  filter(party_from != party_to) |> 
+  arrange(desc(prob))
+
+
+# Temporal Structure, ML 80/20 --------------------------------------------
+
+
+
+# train_80_predict_links <- predict_edges(train_80_retweet_network)
+# 
+# store_object(train_80_predict_links, "data")
+# 
+# test_20_predict_links <- predict_edges(test_20_retweet_network)
+# 
+# store_object(test_20_predict_links, "data")
+# 
+# train_80_predict_links
+
+train_80_predict_links <- readRDS("~/Documents/MDS/Semester_4/Applied_Network_Analysis/mps-de_network_analysis/data/train_80_predict_links.rds")
+test_20_predict_links <- readRDS("~/Documents/MDS/Semester_4/Applied_Network_Analysis/mps-de_network_analysis/data/test_20_predict_links.rds")
+
+
+
+df_train_80_predict_links <- pred_df(train_80_predict_links) |> 
+  mutate(
+    prob_gr_0.5 = ifelse(prob > 0.5, 1, 0),
+    edge_id = paste(edges_from, edges_to, sep =  "_")
+  )
+df_test_20_predict_links <- pred_df(test_20_predict_links) |> 
+  mutate(
+    prob_gr_0.5 = ifelse(prob > 0.5, 1, 0),
+    edge_id = paste(edges_from, edges_to, sep = "_")
+  )
+
+
+# TODO share of retweets within party
+
+# share of parties from retweeted tweets by party 
+retweet_within_df |> 
+  filter(!party_from %in% c("Fraktionslos", NA),
+         !party_to %in% c("Fraktionslos", NA)) |> 
+  group_by(party_from) |> 
+  count(party_to) |> 
+  mutate(freq = n / sum(n)) %>%
+  print(n = nrow(.))
+
+retweet_within_df |> 
+  filter(!party_from %in% c("Fraktionslos", NA),
+         !party_to %in% c("Fraktionslos", NA)) |> 
+  group_by(party_from) |> 
+  count(party_to) |> 
+  mutate(freq = n / sum(n)) %>% 
+  filter(party_from == party_to) |> 
+  arrange(desc(freq))
+
+retweet_within_df |> 
+  filter(!party_from %in% c("Fraktionslos", NA),
+         !party_to %in% c("Fraktionslos", NA)) |> 
+  group_by(party_to) |> 
+  count(party_from) |> 
+  mutate(freq = n / sum(n)) %>%
+  print(n = nrow(.))
+  
