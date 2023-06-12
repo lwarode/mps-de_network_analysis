@@ -15,8 +15,6 @@ execute:
   cache: true  
 ---
 
-In a data analysis exercise a real-world, but pre-defined and cleaned data set, is assigned from a small collection of examples. A list of descriptive measures, as well as community detection methods should be applied, using a programming language and libraries of choice (which have been introduced in the course before). In a short report, either including the code (e.g., a python notebook) or a text document with plots (in this case the code should be submitted additionally), the results should be presented and their meaning interpreted and discussed with respect to the dataset at hand. Students will have two weeks to solve this task individually at home. Grading will be one half the correct application of the descriptive measures and the other half the presentation (i.e., plots), the interpretation and the discussion of those results.
-
 ```{r}
 library(tidyverse)
 library(igraph)
@@ -550,7 +548,7 @@ closeness_retweet_network %>%
 
 ### Betweenness Centrality
 
-TODO: explain betweenness centrality
+Next to Closeness, there is Betweenness Centrality. Betweenness is defined as the number of shortest paths that go through a node (divided by all shortest paths). It is thus also a measure of Centrality, but with a different statistical focus.
 
 ```{r}
 betweenness_retweet_network <- retweet_network %>% 
@@ -567,6 +565,8 @@ betweenness_retweet_network %>%
 ```
 
 
+The Betweenness distribution is heavily skewed. There are only 5 MPs that have a Betweenness > 10000.
+
 
 ```{r}
 betweenness_retweet_network %>% 
@@ -575,6 +575,9 @@ betweenness_retweet_network %>%
   geom_histogram() +
   theme_custom()
 ```
+
+For matters of visualization, it thus makes sense to plot the log of the Betweenness.
+
 ```{r}
 betweenness_retweet_network %>% 
   as_tibble() %>% 
@@ -584,6 +587,7 @@ betweenness_retweet_network %>%
   theme_custom()
 ```
 
+After seeing the log distribution, it is easier to compare the distribution across the parties. While most parties have an unimodal distribution, the AfD has a flatter distribution with a lower average betweenness and no real peak. This confirms the finding of the applied Closeness Centrality.
 
 ```{r}
 betweenness_retweet_network %>% 
@@ -600,34 +604,142 @@ betweenness_retweet_network %>%
   labs(y = "")
 ```
 
+### Eigenvector Centrality
 
-### Selecting Subgraph for Visualization
-
-Selecting a subgraph (sub-network) based on the largest component.
+Eigenvector Centrality takes into consideration the whole network when assessing centrality. The assigned centrality depends of a node depends on the centrality of neighbours 
 
 ```{r}
-
+eigen_retweet_network <- retweet_network %>% 
+  mutate(eigen = centrality_eigen())
 ```
 
+Interestingly, the AfD dominates the Eigenvector Centrality. Given the `retweet` dynamic that most AfD MPs seem to `retweet` a lot within the party, but not just to certain central hubs, this is an intersting finding.
 
+```{r}
+eigen_retweet_network %>%
+  filter(eigen != 1) %>% 
+  arrange(desc(eigen)) %>% 
+  select(name, eigen, party) %>% 
+  as_tibble() %>% 
+  head(20) %>% 
+  knitr::kable()
+```
+
+The dynamic is also repeated visually: Most parties have an approximately normally distributed Eigenvector Centrality, while the AfD has a peak on the right side ("left skewed").
+
+```{r}
+eigen_retweet_network %>% 
+  filter(!party %in% c("Fraktionslos", NA)) %>%
+  filter(eigen != 1) %>% 
+  as_tibble() %>% 
+  ggplot(aes(x = eigen, color = party)) + 
+  facet_wrap(~ party) +
+  geom_density() +
+  scale_x_log10() +
+  # geom_density() +<
+  scale_color_manual(values = party_colors) +
+  theme_custom() +
+  labs(y = "")
+```
 
 
 ## Community Detection
 
+For substantive reasons, community detection is an interest approach given the already existing party clusters, that are visible when plotting the whole network. In addition, since we are dealing with a directed network, not every type of community detection algorithm is appropriate.
 
-Since we are dealing with a directed network, not every type of community detection algorithm is appropriate.
+### Components
 
-```{r, eval=FALSE}
-retweet_network_group_betweenness <- retweet_network %>% 
-  mutate(group = group_edge_betweenness(n_groups = 6))
+Let's start with the basic `components` detection.
+
+```{r}
+group_comp_retweet_network <- retweet_network %>% 
+  mutate(
+    group_comp_weak = group_components("weak"),
+    group_comp_strong = group_components("strong")
+  )
+```
+
+Applying the "weak" component algorithm yields a redundant community detection: Every node is part of the same community
+
+```{r}
+group_comp_retweet_network %>% distinct(group_comp_weak)
+```
+
+However, when applying the "strong" definition, there are 42 distinct communities detected. "Strong" refers to detecting cliques, meaning that every of those 42 subgroups are fully connected within.
+
+```{r}
+group_comp_retweet_network %>% distinct(group_comp_strong) 
+```
+
+Let's now have a look on how the found components correspond to the party structure.
+
+```{r}
+group_comp_retweet_network %>% 
+  filter(!party %in% c("Fraktionslos", NA)) %>%
+  as_tibble() %>% 
+  group_by(party, group_comp_strong) %>% 
+  count() %>% 
+  arrange((desc(n))) %>% 
+  knitr::kable()
+```
+
+Turns out, that most parties are part of group 1, by far. The algorithm is not really informative as well.
+
+```{r}
+group_comp_retweet_network %>% 
+  filter(!party %in% c("Fraktionslos", NA)) %>%
+  as_tibble() %>% 
+  ggplot(aes(x = group_comp_strong, fill = party)) + 
+  facet_wrap(~ party) +
+  geom_bar() +
+  scale_fill_manual(values = party_colors) +
+  theme_custom() 
+```
+
+### Infomap
+
+As the components did not yield sufficient discrimiant communities, let's try out other algorithms. Infomap follows the random walker approach.
+
+```{r}
+set.seed(42)
+group_infomap_retweet_network <- retweet_network %>% 
+  mutate(
+    group_infomap = group_infomap()
+  )
+```
+
+It seems to work, at least partially! Especially the AfD communities are detected efficiently and thus separated from the other parties. However, a validated finding would need a sufficient amount of trials and tuning to get rid of the random component.
+
+The parties are differently present across the groups, which seems satisfies the discrimant goal.
+
+```{r}
+group_infomap_retweet_network %>% 
+  filter(!party %in% c("Fraktionslos", NA)) %>%
+  as_tibble() %>% 
+  group_by(party, group_infomap) %>% 
+  count() %>% 
+  arrange(party, desc(n)) %>% 
+  group_by(party) %>% 
+  slice(1:3) %>% 
+  knitr::kable(caption = "Top 3 Infomap Groups by Party")
 ```
 
 
-### Community Detection in Relationship with Party Affiliation
+```{r}
+group_infomap_retweet_network %>% 
+  filter(!party %in% c("Fraktionslos", NA)) %>%
+  as_tibble() %>% 
+  ggplot(aes(x = group_infomap, fill = party)) + 
+  facet_wrap(~ party) +
+  geom_bar() +
+  scale_fill_manual(values = party_colors) +
+  theme_custom() 
+```
+
 
 ## Further Work
 
-### Relationship of Centrality and Social Media Profile Influence
+For the last assignment, it would be interesting to dive in a bit more into the correspondence of certain community detection and clustering algorithms and check their correspondence with the party structure. In addition, given that we are dealing with social media data dynamics, there is a lot of social media context data available. Every Tweet has a certain number of likes and comments attached that could serve as **weights**. Furthermore, every profile exhibits a number of followers that indicate the social media relevance. It would be interesting to check whether and which type of centrality is **statistically associated** with the number of followers.
 
 
-The `echo: false` option disables the printing of code (only output is displayed).
+
